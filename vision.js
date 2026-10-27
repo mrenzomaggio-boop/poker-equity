@@ -233,6 +233,9 @@ const Vision = (() => {
       if (ix <= 0 || iy <= 0) continue;
       const small = Math.min((a.x1 - a.x0 + 1) * (a.y1 - a.y0 + 1), (b.x1 - b.x0 + 1) * (b.y1 - b.y0 + 1));
       if (ix * iy < 0.3 * small) continue;
+      // Solo pezzi di taglia simile: il seme piccolo dell'indice non va fuso col seme grande accanto.
+      const sa = Math.max(a.x1 - a.x0, a.y1 - a.y0), sb = Math.max(b.x1 - b.x0, b.y1 - b.y0);
+      if (Math.min(sa, sb) < 0.35 * Math.max(sa, sb)) continue;
       a.ids.push(...b.ids); a.n += b.n;
       a.x0 = Math.min(a.x0, b.x0); a.x1 = Math.max(a.x1, b.x1); a.y0 = Math.min(a.y0, b.y0); a.y1 = Math.max(a.y1, b.y1);
       glyphs[j] = null;
@@ -311,6 +314,35 @@ const Vision = (() => {
       const x0 = Math.min(c.rk.x0, c.st.x0), x1 = Math.max(c.rk.x1, c.st.x1);
       const y0 = Math.min(c.rk.y0, c.st.y0), y1 = Math.max(c.rk.y1, c.st.y1);
       out.push({ code: c.code, conf: c.conf, x: (x0 + x1) / 2 / W, y: (y0 + y1) / 2 / H, w: (x1 - x0 + 1) / W, h: (y1 - y0 + 1) / H });
+    }
+
+    // 6) Numeri spezzati (righe del monitor, tratti sottili): si parte da un seme ben riconosciuto
+    //    e si legge tutto l'inchiostro dello stesso colore subito sopra, anche se è in più pezzi.
+    //    Vale per carte diritte, come quelle del board.
+    for (const st of glyphs) {
+      if (used.has(st)) continue;
+      const s = best(feature(st.pts, ink, W, 0, 1), suitT.filter((t) => SUITS_BY_INK[st.cls].includes(t.name)));
+      if (s.s < 0.6) continue;
+      const rx0 = st.cx - st.s, rx1 = st.cx + st.s, ry0 = st.y0 - 2.2 * st.s, ry1 = st.y0 - 1;
+      const ids = new Set();
+      let x0 = W, x1 = -1, y0 = H, y1 = -1, n = 0, taken = false;
+      for (const c of all) {
+        if (c.cls !== st.cls || c === st || c.x0 < rx0 || c.x1 > rx1 || c.y0 < ry0 || c.y1 > ry1) continue;
+        if (used.has(c)) { taken = true; break; }  // sopra c'è già un indice letto: è il seme grande
+
+        for (const id of c.ids) ids.add(id);
+        n += c.n;
+        x0 = Math.min(x0, c.x0); x1 = Math.max(x1, c.x1); y0 = Math.min(y0, c.y0); y1 = Math.max(y1, c.y1);
+      }
+      if (taken || n < 0.25 * st.n || y1 - y0 + 1 < 0.6 * st.s || y1 - y0 + 1 > 2 * st.s) continue;
+      const pts = [];
+      for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) if (ids.has(lab[y * W + x])) pts.push(x, y);
+      const r = best(feature(pts, ink, W, 0, 1), rankT);
+      if (stats.debug) stats.debug.push(["anchor", Math.round(st.cx), Math.round(st.cy), r.name, r.s.toFixed(2), s.name, s.s.toFixed(2)]);
+      if (r.s < RANK_MIN - 0.05) continue;
+      used.add(st);
+      const X0 = Math.min(x0, st.x0), X1 = Math.max(x1, st.x1);
+      out.push({ code: (RANK_CODE[r.name] || r.name) + s.name, conf: (r.s + s.s) / 2, x: (X0 + X1) / 2 / W, y: (y0 + st.y1) / 2 / H, w: (X1 - X0 + 1) / W, h: (st.y1 - y0 + 1) / H });
     }
     return out;
   }
