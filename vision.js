@@ -10,6 +10,10 @@ const Vision = (() => {
   const RANK_CODE = { "10": "T" };
   // Colore dell'inchiostro -> semi possibili (blu e verde: mazzo a quattro colori).
   const SUITS_BY_INK = { 2: "cs", 3: "dh", 4: "d", 5: "c" };
+  // Mazzo a quattro colori impostato nel gioco: il colore da solo dice il seme.
+  const FOUR_BY_INK = { 2: "s", 3: "h", 4: "d", 5: "c" };
+  let four = false;
+  const inkSuits = (c) => (four ? FOUR_BY_INK : SUITS_BY_INK)[c];
   const SUIT_CHARS = { s: "\u2660", c: "\u2663", h: "\u2665", d: "\u2666" };
   const FONTS = ["Arial", "Helvetica", "Verdana", "Trebuchet MS", "Georgia", "Times New Roman",
     "Courier New", "Impact", "Avenir Next", "Futura", "Gill Sans", "Chalkboard SE", "Marker Felt",
@@ -163,7 +167,9 @@ const Vision = (() => {
     return o;
   }
 
-  function detect(img) {
+  // opt.card: larghezza di una carta in pixel, quando si sa già dove sono le carte
+  // (posizioni segnate): le misure dei glifi si regolano su quella invece che sull'immagine.
+  function detect(img, opt = {}) {
     if (!rankT) build();
     const RT = rankT.concat(learned.rank), ST = suitT.concat(learned.suit);
     const W = img.width, H = img.height, N = W * H, d = img.data;
@@ -239,7 +245,10 @@ const Vision = (() => {
     }
 
     // 3) Glifi plausibili: dimensione, riempimento e soprattutto carta bianca tutt'intorno.
-    const minS = Math.max(5, Math.round(Math.min(W, H) * 0.007)), maxS = Math.min(W, H) * 0.15;
+    const minS = opt.card ? Math.max(5, Math.round(0.08 * opt.card)) : Math.max(5, Math.round(Math.min(W, H) * 0.007));
+    const maxS = opt.card ? 0.9 * opt.card : Math.min(W, H) * 0.15;
+    // Con quattro colori il seme è già deciso dal colore: della forma basta che somigli a un seme.
+    const suitMin = four ? 0.3 : SUIT_MIN, pairMin = four ? RANK_MIN + 0.3 : 2 * RANK_MIN + 0.03;
     const all = [...comps.values()];
     const onPaper = (c, s) => {
       const m = Math.ceil(0.3 * s);
@@ -326,7 +335,7 @@ const Vision = (() => {
       const [up, lo] = vy >= 0 ? [a, b] : [b, a];
       vx = (lo.cx - up.cx) / dist; vy = (lo.cy - up.cy) / dist;
       if (Math.abs(vx) > 0.71) continue;
-      const suits = SUITS_BY_INK[a.cls];
+      const suits = inkSuits(a.cls);
       for (const [rk, st, dx, dy] of [[up, lo, vx, vy], [lo, up, -vx, -vy]]) {
         const read = (g, list) => {
           const a = best(feature(g.pts, ink, W, dx, dy), list);
@@ -347,7 +356,7 @@ const Vision = (() => {
           if (big.s > s.s && big.s > 0.7) s = big;
         }
         // Un numero un po' incerto passa se il seme è chiaro (e viceversa): conta la coppia.
-        if (r.s < RANK_MIN - 0.05 || s.s < SUIT_MIN || r.s + s.s < 2 * RANK_MIN + 0.03) continue;
+        if (r.s < RANK_MIN - 0.05 || s.s < suitMin || r.s + s.s < pairMin) continue;
         cand.push({ rk, st, code: (RANK_CODE[r.name] || r.name) + s.name, conf: (r.s + s.s) / 2, rf: r.q, sf: s.q });
       }
     }
@@ -369,8 +378,8 @@ const Vision = (() => {
     //    Vale per carte diritte, come quelle del board.
     for (const st of glyphs) {
       if (used.has(st)) continue;
-      const s = best(feature(st.pts, ink, W, 0, 1), ST.filter((t) => SUITS_BY_INK[st.cls].includes(t.name)));
-      if (s.s < 0.6) continue;
+      const s = best(feature(st.pts, ink, W, 0, 1), ST.filter((t) => inkSuits(st.cls).includes(t.name)));
+      if (s.s < (four ? 0.4 : 0.6)) continue;
       const rx0 = st.cx - st.s, rx1 = st.cx + st.s, ry0 = st.y0 - 2.2 * st.s, ry1 = st.y0 - 1;
       const ids = new Set();
       let x0 = W, x1 = -1, y0 = H, y1 = -1, n = 0, taken = false;
@@ -395,5 +404,6 @@ const Vision = (() => {
     return out;
   }
 
-  return { detect, stats, learnCard, unlearn, exportLearned, importLearned, forget, get learned() { return learned; } };
+  const setFourColor = (v) => { four = !!v; };
+  return { detect, stats, setFourColor, learnCard, unlearn, exportLearned, importLearned, forget, get learned() { return learned; } };
 })();

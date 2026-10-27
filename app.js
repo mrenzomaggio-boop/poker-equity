@@ -18,6 +18,67 @@ let lastBoxes = [];
 
 const setStatus = (t) => { $("status").textContent = t; };
 
+// Posizioni segnate una volta, con il telefono fermo su un supporto: le 2 carte della mano e le
+// 3 del flop (coordinate del video 0..1). Turn e river stanno dopo il flop, allo stesso passo.
+// Si legge solo lì, ingrandito, sommando gli ultimi AVG fotogrammi: le righe del monitor e il
+// rumore cambiano da un fotogramma all'altro, le carte no.
+const AVG = 3, TARGET = 360, ZONE_PX = 1.5e6;
+let slots = null, marking = null;
+const zbuf = { hand: [], board: [] }, zcan = { hand: document.createElement("canvas"), board: document.createElement("canvas") };
+const MARK_STEPS = ["la tua prima carta", "la tua seconda carta", "la prima carta del flop (a sinistra)",
+  "la seconda carta del flop", "la terza carta del flop"];
+
+function zonesFrom(t, vw, vh) {
+  const P = t.map((p) => ({ x: p.x * vw, y: p.y * vh }));
+  const dist = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
+  const d = Math.max(8, (dist(P[2], P[3]) + dist(P[3], P[4])) / 2);
+  const ux = (P[4].x - P[2].x) / (2 * d), uy = (P[4].y - P[2].y) / (2 * d);
+  const bp = [P[2], P[3], P[4], { x: P[4].x + ux * d, y: P[4].y + uy * d }, { x: P[4].x + 2 * ux * d, y: P[4].y + 2 * uy * d }];
+  const box = (pts, mx, my) => {
+    const x0 = Math.max(0, Math.min(...pts.map((p) => p.x)) - mx), x1 = Math.min(vw, Math.max(...pts.map((p) => p.x)) + mx);
+    const y0 = Math.max(0, Math.min(...pts.map((p) => p.y)) - my), y1 = Math.min(vh, Math.max(...pts.map((p) => p.y)) + my);
+    return { x: Math.round(x0), y: Math.round(y0), w: Math.max(1, Math.round(x1 - x0)), h: Math.max(1, Math.round(y1 - y0)) };
+  };
+  return { d, hand: box([P[0], P[1]], 0.9 * d, 1.1 * d), board: box(bp, 0.75 * d, 1.0 * d) };
+}
+
+// Inquadratura cambiata (telefono spostato, carte nuove): la media ripartirebbe da immagini diverse.
+function moved(a, b) {
+  let s = 0, n = 0;
+  for (let i = 0; i < a.length; i += 64) { s += Math.abs(a[i] - b[i]); n++; }
+  return s / n > 12;
+}
+
+function detectZones() {
+  const vw = video.videoWidth, vh = video.videoHeight, Z = zonesFrom(slots, vw, vh);
+  const best = {}, t0 = performance.now();
+  let glyphs = 0;
+  for (const name of ["hand", "board"]) {
+    const z = Z[name], cv = zcan[name];
+    const k = Math.min(3, Math.max(1, TARGET / Z.d), Math.sqrt(ZONE_PX / (z.w * z.h)));
+    const w = Math.round(z.w * k), h = Math.round(z.h * k);
+    if (cv.width !== w || cv.height !== h) { cv.width = w; cv.height = h; }
+    const g = cv.getContext("2d", { willReadFrequently: true });
+    g.imageSmoothingQuality = "high";
+    g.drawImage(video, z.x, z.y, z.w, z.h, 0, 0, w, h);
+    const img = g.getImageData(0, 0, w, h), px = img.data, buf = zbuf[name];
+    if (buf.length && (buf[0].length !== px.length || moved(buf[buf.length - 1], px))) buf.length = 0;
+    buf.push(px.slice());
+    if (buf.length > AVG) buf.shift();
+    if (buf.length > 1) {
+      const n = buf.length;
+      for (let i = 0; i < px.length; i++) { let a = 0; for (let j = 0; j < n; j++) a += buf[j][i]; px[i] = a / n; }
+    }
+    for (const c of Vision.detect(img, { card: 0.95 * Z.d * k })) {
+      c.x = (z.x + c.x * z.w) / vw; c.y = (z.y + c.y * z.h) / vh; c.w = c.w * z.w / vw; c.h = c.h * z.h / vh; c.zone = name;
+      if (!best[c.code] || best[c.code].conf < c.conf) best[c.code] = c;
+    }
+    glyphs += Vision.stats.glyphs;
+  }
+  $("dbg").textContent = "simboli " + glyphs + " · carte " + Object.keys(best).length + " · " + Math.round(performance.now() - t0) + " ms";
+  return best;
+}
+
 // Decifra cards.enc (salt 16 | iv 12 | AES-GCM) con la password.
 async function decryptModel(pw) {
   const res = await fetch("cards.enc");
@@ -101,6 +162,7 @@ const fctx = frame.getContext("2d", { willReadFrequently: true });
 
 let topConf = 0;
 async function detect() {
+  if (slots) return detectZones();
   const vw = video.videoWidth, vh = video.videoHeight, k = Math.min(1, 1920 / Math.max(vw, vh));
   const fw = Math.round(vw * k), fh = Math.round(vh * k);
   if (frame.width !== fw || frame.height !== fh) { frame.width = fw; frame.height = fh; }
@@ -161,8 +223,9 @@ function update(best) {
   const now = performance.now();
   // Fotogrammi mossi o sfocati (nitidezza molto sotto le migliori recenti) non votano,
   // salvo letture molto sicure: è lì che nascono gli scambi tipo 2 -> 7.
+  // Con le posizioni segnate il telefono è fermo e i fotogrammi vengono mediati: votano tutti.
   sharpMax = Math.max(Vision.stats.sharp, sharpMax * 0.98);
-  const sharp = Vision.stats.sharp >= 0.7 * sharpMax;
+  const sharp = !!slots || Vision.stats.sharp >= 0.7 * sharpMax;
   if (!sharp) $("dbg").textContent += " · tieni fermo il telefono";
   for (let [k, v] of Object.entries(best)) {
     if (!sharp && v.conf < 0.75) continue;
@@ -170,7 +233,7 @@ function update(best) {
     const m = memo[k] || (memo[k] = { n: 0, x: v.x, y: v.y });
     m.n++; m.seen = now;
     m.x += (v.x - m.x) * 0.3; m.y += (v.y - m.y) * 0.3;
-    m.rf = v.rf; m.sf = v.sf;
+    m.rf = v.rf; m.sf = v.sf; m.zone = v.zone;
     // Carta confermata più volte e senza letture rivali nello stesso punto: il suo numero e il suo
     // seme, così come li vede la fotocamera, diventano modelli per le prossime letture.
     if (sharp && v.conf >= 0.65 && (m.n === 6 || m.n === 20) && !rival(k, m)) { Vision.learnCard(k, v.rf, v.sf); saveLearned(); }
@@ -182,8 +245,9 @@ function update(best) {
   for (const [k, m] of Object.entries(memo).filter(([, m]) => m.n >= CONFIRM).sort((a, b) => b[1].n - a[1].n)) {
     if (!kept.some(([, o]) => near(o, m))) kept.push([k, m]);
   }
-  const h = kept.filter(([, m]) => m.y >= 0.5).slice(0, 2).map(([k]) => k).sort();
-  const b = kept.filter(([, m]) => m.y < 0.5).slice(0, 5).map(([k]) => k).sort();
+  const inHand = (m) => (slots ? m.zone === "hand" : m.y >= 0.5);
+  const h = kept.filter(([, m]) => inHand(m)).slice(0, 2).map(([k]) => k).sort();
+  const b = kept.filter(([, m]) => !inHand(m)).slice(0, 5).map(([k]) => k).sort();
   lastBoxes = Object.entries(best).map(([k, v]) => ({ k, ...v }));
   autoHand = h; autoBoard = b;
   const nh = lockHand ? hand : h, nb = lockBoard ? board : b;
@@ -214,6 +278,13 @@ function draw() {
   const vw = video.videoWidth, vh = video.videoHeight;
   const s = Math.max(dw / vw, dh / vh);
   const ox = (dw - vw * s) / 2, oy = (dh - vh * s) / 2;
+  if (slots) {
+    const Z = zonesFrom(slots, vw, vh);
+    ctx.strokeStyle = "rgba(255, 235, 59, .8)"; ctx.lineWidth = 2;
+    for (const z of [Z.hand, Z.board]) ctx.strokeRect(ox + z.x * s, oy + z.y * s, z.w * s, z.h * s);
+  }
+  ctx.fillStyle = "#ff0";
+  for (const p of marking || []) { ctx.beginPath(); ctx.arc(ox + p.x * vw * s, oy + p.y * vh * s, 8, 0, 2 * Math.PI); ctx.fill(); }
   ctx.strokeStyle = "#3f3"; ctx.fillStyle = "#3f3"; ctx.lineWidth = 2; ctx.font = "14px monospace";
   for (const b of lastBoxes) {
     const x = ox + (b.x - b.w / 2) * vw * s, y = oy + (b.y - b.h / 2) * vh * s;
@@ -304,6 +375,43 @@ $("pick-auto").onclick = () => {
 $("pick-close").onclick = () => { $("picker").hidden = true; };
 $("pick-forget").onclick = () => { Vision.forget(); store.del("pe_learn"); $("picker").hidden = true; };
 Vision.importLearned(store.get("pe_learn") || "[]");
+
+// Segnare le posizioni: si tocca il centro di 5 carte sull'immagine della fotocamera.
+const resetMemory = () => { memo = {}; alias = {}; zbuf.hand = []; zbuf.board = []; published = ""; };
+function setSlots(v) {
+  slots = v;
+  if (v) store.set("pe_slots", JSON.stringify(v)); else store.del("pe_slots");
+  $("divider").hidden = !!v;
+  $("mark").textContent = v ? "Rifai posizioni" : "Segna carte";
+  resetMemory();
+}
+function markHint() {
+  $("markhint").hidden = !marking;
+  if (marking) $("marktext").textContent = "Tocca il centro della " + MARK_STEPS[marking.length].replace(/^(la|il) /, "");
+}
+$("mark").onclick = () => { marking = []; markHint(); };
+$("mark-cancel").onclick = () => { marking = null; markHint(); };
+$("mark-clear").onclick = () => { marking = null; markHint(); setSlots(null); };
+overlay.addEventListener("click", (ev) => {
+  if (!marking || !video.videoWidth) return;
+  const r = overlay.getBoundingClientRect(), vw = video.videoWidth, vh = video.videoHeight;
+  const s = Math.max(r.width / vw, r.height / vh), ox = (r.width - vw * s) / 2, oy = (r.height - vh * s) / 2;
+  marking.push({ x: (ev.clientX - r.left - ox) / s / vw, y: (ev.clientY - r.top - oy) / s / vh });
+  if (marking.length === MARK_STEPS.length) { setSlots(marking); marking = null; }
+  markHint();
+  draw();
+});
+try { const v = JSON.parse(store.get("pe_slots")); if (Array.isArray(v) && v.length === 5) setSlots(v); } catch (e) {}
+
+// Mazzo a quattro colori (opzione del gioco): il seme si legge dal colore.
+function setFour(v) {
+  Vision.setFourColor(v);
+  $("four").checked = v;
+  if (v) store.set("pe_four", "1"); else store.del("pe_four");
+  resetMemory();
+}
+$("four").onchange = () => setFour($("four").checked);
+setFour(store.get("pe_four") === "1");
 
 window.addEventListener("scroll", () => { if (window.scrollY || window.scrollX) window.scrollTo(0, 0); });
 

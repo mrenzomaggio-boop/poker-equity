@@ -41,6 +41,10 @@
   #picker .acts { display: flex; gap: 8px; }
   #picker .acts button { flex: 1; padding: 12px; border: 0; border-radius: 10px; font-size: 16px; font-weight: 700; }
   #pick-ok { background: #3f3; }
+  #mark { padding: 10px 16px; border: 0; border-radius: 22px; background: #ff0; font-size: 16px; font-weight: 700; }
+  #markhint { position: fixed; z-index: 5; left: 12px; right: 12px; bottom: 170px; text-align: center; font-size: 18px; font-weight: 700; pointer-events: none; }
+  #markhint button { pointer-events: auto; margin: 10px 6px 0; padding: 10px 14px; border: 0; border-radius: 10px; font-size: 15px; }
+  .four { font-size: 14px; display: flex; align-items: center; gap: 8px; }
 </style>
 </head>
 <body>
@@ -60,6 +64,7 @@
   <div class="row"><span>Board</span><b class="slot" data-i="2"></b><b class="slot" data-i="3"></b><b class="slot" data-i="4"></b><b class="slot" data-i="5"></b><b class="slot" data-i="6"></b></div>
   <div style="font-size:12px;color:#aaa">Tocca una casella e poi la carta giusta. Tocca di nuovo una casella selezionata per svuotarla.</div>
   <div id="grid"></div>
+  <label class="four"><input id="four" type="checkbox"> Nel gioco ho attivato il mazzo a 4 colori (♦ blu, ♣ verde)</label>
   <div class="acts">
     <button id="pick-close">Chiudi</button>
     <button id="pick-auto">Automatico</button>
@@ -69,8 +74,15 @@
     <button id="pick-forget" style="margin-top:6px;border:0;background:none;color:#f88;font-size:12px;padding:0">Dimentica ciò che ha imparato</button></div>
 </div>
 
+<div id="markhint" class="panel" hidden>
+  <div id="marktext"></div>
+  <div style="font-size:13px;font-weight:400;color:#ccc;margin-top:6px">Fallo con il telefono già fermo sul supporto e il flop sul tavolo.</div>
+  <button id="mark-cancel">Annulla</button><button id="mark-clear">Togli posizioni</button>
+</div>
+
 <div id="bottom">
   <div id="eq" class="panel"></div>
+  <button id="mark">Segna carte</button>
   <div class="opp panel">
     <button id="minus">−</button>
     <span>Avversari: <b id="opp">1</b></span>
@@ -80,18 +92,18 @@
 
 <div id="intro">
   <h1>Poker Equity</h1>
-  <p>Inquadra il tavolo: carte sopra la linea gialla = board, sotto = la tua mano.<br>
+  <p>Metti il telefono fermo su un supporto davanti al monitor, poi tocca «Segna carte» e indica dove stanno le tue carte e il flop.<br>
      Tutto resta sul tuo telefono, nessuna immagine viene inviata.</p>
   <input id="pw" type="password" placeholder="Password" autocomplete="current-password">
   <label class="rem"><input id="remember" type="checkbox" checked> Ricordami su questo dispositivo</label>
   <button id="start">Avvia fotocamera</button>
   <div id="status"></div>
-  <div style="position:absolute;bottom:16px;font-size:12px;color:#666">versione 10</div>
+  <div style="position:absolute;bottom:16px;font-size:12px;color:#666">versione 11</div>
 </div>
 
 <script src="https://cdn.jsdelivr.net/npm/onnxruntime-web@1.18.0/dist/ort.min.js"></script>
-<script src="engine.js?v=10"></script>
-<script src="vision.js?v=10"></script>
-<script src="app.js?v=10"></script>
+<script src="engine.js?v=11"></script>
+<script src="vision.js?v=11"></script>
+<script src="app.js?v=11"></script>
 </body>
 </html>
