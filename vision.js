@@ -7,7 +7,7 @@ const Vision = (() => {
   const GW = 16, GH = 24, SS = 3;          // griglia di confronto e sottocampionamento
   const RANK_MIN = 0.55, SUIT_MIN = 0.55;  // somiglianza minima per accettare un indice
   const RANKS = ["A", "2", "3", "4", "5", "6", "7", "8", "9", "10", "J", "Q", "K"];
-  const RANK_CODE = { "10": "T", "1": "T" };
+  const RANK_CODE = { "10": "T" };
   // Colore dell'inchiostro -> semi possibili (blu e verde: mazzo a quattro colori).
   const SUITS_BY_INK = { 2: "cs", 3: "dh", 4: "d", 5: "c" };
   const SUIT_CHARS = { s: "\u2660", c: "\u2663", h: "\u2665", d: "\u2666" };
@@ -16,7 +16,7 @@ const Vision = (() => {
     "Noteworthy", "Comic Sans MS", "Roboto", "sans-serif", "serif"];
   const NB = [[-1, 0], [-2, 0], [-2, -1], [-1, -1], [0, -1], [1, -1], [2, -1], [-1, -2], [0, -2], [1, -2]];
   let rankT = null, suitT = null;
-  const stats = { glyphs: 0, pairs: 0 };
+  const stats = { glyphs: 0, pairs: 0, sharp: 0 };
 
   // Campiona la forma su una griglia GWxGH nel sistema della carta (dn = verso il basso).
   // pts: pixel della forma [x0, y0, x1, y1, ...]; ink: intensità dell'inchiostro (larghezza w).
@@ -109,7 +109,7 @@ const Vision = (() => {
     rankT = []; suitT = [];
     const add = (list, t) => { if (t) list.push(t); };
     for (const font of FONTS) for (const w of ["300", "400", "700"]) {
-      for (const r of [...RANKS, "1"]) add(rankT, shape(r, (g) => { g.font = `${w} 64px "${font}"`; g.fillText(r, 48, 50); }));
+      for (const r of RANKS) add(rankT, shape(r, (g) => { g.font = `${w} 64px "${font}"`; g.fillText(r, 48, 50); }));
       for (const s of "cdhs") add(suitT, shape(s, (g) => { g.font = `${w} 64px "${font}"`; g.fillText(SUIT_CHARS[s] + "\uFE0E", 48, 50); }));
     }
     for (const s of "cdhs") add(suitT, shape(s, (g) => { g.beginPath(); SUIT_PATHS[s](g); g.fill(); }));
@@ -139,6 +139,10 @@ const Vision = (() => {
     //    1 bianco (carta), 2 inchiostro scuro, 3 rosso, 4 blu, 5 verde.
     const lum = new Uint8Array(N), hist = new Uint32Array(256);
     for (let i = 0; i < N; i++) { const l = (R[i] * 77 + G[i] * 150 + B[i] * 29) >> 8; lum[i] = l; hist[l]++; }
+    // Nitidezza del fotogramma (gradiente medio): l'app ignora i fotogrammi mossi.
+    let gsum = 0;
+    for (let y = 1; y < H; y += 2) for (let x = 1, i = y * W + 1; x < W; x += 2, i += 2) gsum += Math.abs(lum[i] - lum[i - 1]) + Math.abs(lum[i] - lum[i - W]);
+    stats.sharp = gsum / (((H - 1) >> 1) * ((W - 1) >> 1) || 1);
     let L = 255;
     for (let l = 255, acc = 0; l >= 0; l--) { acc += hist[l]; if (acc > N * 0.02) { L = l; break; } }
     const tWhite = L * 0.7, tDark = L * 0.55;

@@ -1,7 +1,8 @@
 // Riconoscimento carte (logica sugli indici, vision.js; YOLO ONNX solo con ?yolo) + equity.
 const SIZE = 640, CONF = 0.35, ITER = 2000;
-// Una carta entra in mano/board se compare in almeno VOTES degli ultimi HIST fotogrammi.
-const HIST = 6, VOTES = 3;
+// Memoria della mano: ogni lettura nitida è un voto e una carta confermata (CONFIRM voti) resta
+// finché non sparisce dall'inquadratura per FORGET_MS: basta leggerla bene qualche volta.
+const CONFIRM = 3, FORGET_MS = 6000;
 const useYolo = new URLSearchParams(location.search).has("yolo");
 const $ = (id) => document.getElementById(id);
 const video = $("video"), overlay = $("overlay");
@@ -10,7 +11,7 @@ work.width = work.height = SIZE;
 const wctx = work.getContext("2d", { willReadFrequently: true });
 
 let session, labels, opponents = 1;
-let hand = [], board = [], history = [], published = "";
+let hand = [], board = [], memo = {}, sharpMax = 0, published = "";
 // Correzione a mano: le carte scelte restano bloccate finché non si torna in automatico.
 let lockHand = false, lockBoard = false, autoHand = [], autoBoard = [];
 let lastBoxes = [];
@@ -67,6 +68,9 @@ async function start() {
   } catch (e) { setStatus("Cattura non disponibile: " + e.message); $("start").disabled = false; return; }
   $("intro").hidden = true;
   $("intro").style.display = "none";
+  // iOS lascia la pagina scrollata dopo la tastiera della password: i pannelli finivano fuori schermo.
+  if (document.activeElement) document.activeElement.blur();
+  window.scrollTo(0, 0);
   setStatus("");
   loop();
 }
@@ -149,18 +153,26 @@ async function detectRegion(region, best) {
   }
 }
 
-// Voto sugli ultimi fotogrammi: una lettura sbagliata isolata non cambia mano e board.
 function update(best) {
-  history.push(best);
-  if (history.length > HIST) history.shift();
-  const tally = {};
-  for (const f of history) for (const [k, v] of Object.entries(f)) {
-    const t = tally[k] || (tally[k] = { n: 0, y: 0 });
-    t.n++; t.y += v.y;
+  const now = performance.now();
+  // Fotogrammi mossi o sfocati (nitidezza molto sotto le migliori recenti) non votano,
+  // salvo letture molto sicure: è lì che nascono gli scambi tipo 2 -> 7.
+  sharpMax = Math.max(Vision.stats.sharp, sharpMax * 0.98);
+  const sharp = Vision.stats.sharp >= 0.7 * sharpMax;
+  for (const [k, v] of Object.entries(best)) {
+    if (!sharp && v.conf < 0.75) continue;
+    const m = memo[k] || (memo[k] = { n: 0, x: v.x, y: v.y });
+    m.n++; m.seen = now;
+    m.x += (v.x - m.x) * 0.3; m.y += (v.y - m.y) * 0.3;
   }
-  const ok = Object.entries(tally).filter(([, t]) => t.n >= VOTES).sort((a, b) => b[1].n - a[1].n);
-  const h = ok.filter(([, t]) => t.y / t.n >= 0.5).slice(0, 2).map(([k]) => k).sort();
-  const b = ok.filter(([, t]) => t.y / t.n < 0.5).slice(0, 5).map(([k]) => k).sort();
+  for (const k in memo) if (now - memo[k].seen > FORGET_MS) delete memo[k];
+  // Letture diverse nello stesso punto (es. 2♦ e 7♦): vince quella vista più volte.
+  const kept = [];
+  for (const [k, m] of Object.entries(memo).filter(([, m]) => m.n >= CONFIRM).sort((a, b) => b[1].n - a[1].n)) {
+    if (!kept.some(([, o]) => Math.abs(o.x - m.x) < 0.04 && Math.abs(o.y - m.y) < 0.03)) kept.push([k, m]);
+  }
+  const h = kept.filter(([, m]) => m.y >= 0.5).slice(0, 2).map(([k]) => k).sort();
+  const b = kept.filter(([, m]) => m.y < 0.5).slice(0, 5).map(([k]) => k).sort();
   lastBoxes = Object.entries(best).map(([k, v]) => ({ k, ...v }));
   autoHand = h; autoBoard = b;
   const nh = lockHand ? hand : h, nb = lockBoard ? board : b;
@@ -265,6 +277,8 @@ $("pick-auto").onclick = () => {
   recompute();
 };
 $("pick-close").onclick = () => { $("picker").hidden = true; };
+
+window.addEventListener("scroll", () => { if (window.scrollY || window.scrollX) window.scrollTo(0, 0); });
 
 $("pw").value = store.get("pe_pw") || "";
 $("start").onclick = start;
