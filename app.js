@@ -11,6 +11,8 @@ const wctx = work.getContext("2d", { willReadFrequently: true });
 
 let session, labels, opponents = 1;
 let hand = [], board = [], history = [], published = "";
+// Correzione a mano: le carte scelte restano bloccate finché non si torna in automatico.
+let lockHand = false, lockBoard = false, autoHand = [], autoBoard = [];
 let lastBoxes = [];
 
 const setStatus = (t) => { $("status").textContent = t; };
@@ -160,15 +162,21 @@ function update(best) {
   const h = ok.filter(([, t]) => t.y / t.n >= 0.5).slice(0, 2).map(([k]) => k).sort();
   const b = ok.filter(([, t]) => t.y / t.n < 0.5).slice(0, 5).map(([k]) => k).sort();
   lastBoxes = Object.entries(best).map(([k, v]) => ({ k, ...v }));
-  const key = h.join("") + "|" + b.join("");
-  if (key !== published) { published = key; hand = h; board = b; recompute(); }
+  autoHand = h; autoBoard = b;
+  const nh = lockHand ? hand : h, nb = lockBoard ? board : b;
+  const key = nh.join("") + "|" + nb.join("");
+  if (key !== published) { published = key; hand = nh; board = nb; recompute(); }
 }
 
+const SUIT_SYM = { s: "\u2660", h: "\u2665", d: "\u2666", c: "\u2663" };
+const pretty = (k) => k[0] + SUIT_SYM[k[1]];
+
 function recompute() {
-  $("hand").textContent = hand.join(" ") || "-";
-  $("board").textContent = board.join(" ") || "-";
+  $("hand").textContent = (hand.map(pretty).join(" ") || "-") + (lockHand ? " \u{1F512}" : "");
+  $("board").textContent = (board.map(pretty).join(" ") || "-") + (lockBoard ? " \u{1F512}" : "");
   const hc = hand.map(parseCard), bc = board.map(parseCard);
-  if (hc.length === 2 && (bc.length === 0 || bc.length >= 3)) {
+  // La probabilità serve appena si conoscono le due carte in mano, qualunque sia il board.
+  if (hc.length === 2) {
     $("eq").textContent = equity(hc, bc, opponents, ITER).toFixed(1) + "%";
   } else {
     $("eq").textContent = "";
@@ -206,6 +214,57 @@ function setOpp(n) {
   $("opp").textContent = opponents;
   recompute();
 }
+
+// Selettore: 2 caselle per la mano e 5 per il board; si tocca una casella e poi la carta.
+let draft = [], slot = 0;
+function openPicker() {
+  draft = [hand[0], hand[1], ...board];
+  while (draft.length < 7) draft.push(null);
+  slot = Math.max(0, draft.indexOf(null));
+  renderPicker();
+  $("picker").hidden = false;
+}
+function renderPicker() {
+  document.querySelectorAll("#picker .slot").forEach((el) => {
+    const i = +el.dataset.i;
+    el.textContent = draft[i] ? pretty(draft[i]) : "\u00b7";
+    el.className = "slot" + (i === slot ? " sel" : "") + (draft[i] && "hd".includes(draft[i][1]) ? " red" : "");
+  });
+  const grid = $("grid");
+  grid.textContent = "";
+  for (const s of "shdc") for (const r of "AKQJT98765432") {
+    const k = r + s, b = document.createElement("button");
+    b.textContent = pretty(k);
+    b.className = "hd".includes(s) ? "red" : "";
+    b.disabled = draft.includes(k) && draft[slot] !== k;
+    b.onclick = () => {
+      draft[slot] = k;
+      const next = draft.indexOf(null, slot + 1);
+      slot = next >= 0 ? next : slot;
+      renderPicker();
+    };
+    grid.appendChild(b);
+  }
+}
+document.querySelectorAll("#picker .slot").forEach((el) => {
+  el.onclick = () => { const i = +el.dataset.i; if (i === slot) draft[i] = null; slot = i; renderPicker(); };
+});
+$("info").onclick = openPicker;
+$("pick-ok").onclick = () => {
+  const h = draft.slice(0, 2).filter(Boolean).sort(), b = draft.slice(2).filter(Boolean).sort();
+  lockHand = h.join() !== hand.slice().sort().join() || lockHand;
+  lockBoard = b.join() !== board.slice().sort().join() || lockBoard;
+  hand = h; board = b; published = "";
+  $("picker").hidden = true;
+  recompute();
+};
+$("pick-auto").onclick = () => {
+  lockHand = lockBoard = false;
+  hand = autoHand; board = autoBoard; published = "";
+  $("picker").hidden = true;
+  recompute();
+};
+$("pick-close").onclick = () => { $("picker").hidden = true; };
 
 $("pw").value = store.get("pe_pw") || "";
 $("start").onclick = start;

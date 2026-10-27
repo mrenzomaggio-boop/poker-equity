@@ -26,6 +26,20 @@
   #status { color: #fa0; font-size: 14px; }
   #pw { font-size: 18px; padding: 12px 14px; border-radius: 12px; border: 0; width: 240px; text-align: center; }
   .rem { font-size: 14px; color: #aaa; }
+  #info { cursor: pointer; }
+  #picker { position: fixed; inset: 0; z-index: 10; background: rgba(0, 0, 0, .92); padding: max(16px, env(safe-area-inset-top)) 12px 16px; display: flex; flex-direction: column; gap: 10px; overflow-y: auto; }
+  #picker .row { display: flex; align-items: center; gap: 6px; font-size: 15px; }
+  #picker .row > span { width: 52px; color: #aaa; }
+  #picker .slot { width: 42px; height: 52px; border-radius: 8px; background: #fff; color: #000; display: flex; align-items: center; justify-content: center; font: 700 18px -apple-system, system-ui, sans-serif; }
+  #picker .slot.sel { outline: 3px solid #3f3; }
+  #picker .red { color: #d00; }
+  #grid { display: grid; grid-template-columns: repeat(13, 1fr); gap: 3px; }
+  #grid button { padding: 8px 0; border: 0; border-radius: 6px; background: #fff; color: #000; font: 600 13px -apple-system, system-ui, sans-serif; }
+  #grid button.red { color: #d00; }
+  #grid button:disabled { opacity: .25; }
+  #picker .acts { display: flex; gap: 8px; }
+  #picker .acts button { flex: 1; padding: 12px; border: 0; border-radius: 10px; font-size: 16px; font-weight: 700; }
+  #pick-ok { background: #3f3; }
 </style>
 </head>
 <body>
@@ -37,6 +51,19 @@
   <div>Board: <span id="board">-</span></div>
   <div>Mano: <span id="hand">-</span></div>
   <div id="dbg" style="font-size:11px;color:#aaa;font-weight:400"></div>
+  <div style="font-size:11px;color:#3f3;font-weight:400">Tocca qui per correggere le carte</div>
+</div>
+
+<div id="picker" hidden>
+  <div class="row"><span>Mano</span><b class="slot" data-i="0"></b><b class="slot" data-i="1"></b></div>
+  <div class="row"><span>Board</span><b class="slot" data-i="2"></b><b class="slot" data-i="3"></b><b class="slot" data-i="4"></b><b class="slot" data-i="5"></b><b class="slot" data-i="6"></b></div>
+  <div style="font-size:12px;color:#aaa">Tocca una casella e poi la carta giusta. Tocca di nuovo una casella selezionata per svuotarla.</div>
+  <div id="grid"></div>
+  <div class="acts">
+    <button id="pick-close">Chiudi</button>
+    <button id="pick-auto">Automatico</button>
+    <button id="pick-ok">Usa queste</button>
+  </div>
 </div>
 
 <div id="bottom">
@@ -56,12 +83,12 @@
   <label class="rem"><input id="remember" type="checkbox" checked> Ricordami su questo dispositivo</label>
   <button id="start">Avvia fotocamera</button>
   <div id="status"></div>
-  <div style="position:absolute;bottom:16px;font-size:12px;color:#666">versione 5</div>
+  <div style="position:absolute;bottom:16px;font-size:12px;color:#666">versione 6</div>
 </div>
 
 <script src="https://cdn.jsdelivr.net/npm/onnxruntime-web@1.18.0/dist/ort.min.js"></script>
-<script src="engine.js?v=5"></script>
-<script src="vision.js?v=5"></script>
-<script src="app.js?v=5"></script>
+<script src="engine.js?v=6"></script>
+<script src="vision.js?v=6"></script>
+<script src="app.js?v=6"></script>
 </body>
 </html>

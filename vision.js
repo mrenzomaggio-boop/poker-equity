@@ -10,10 +10,11 @@ const Vision = (() => {
   const RANK_CODE = { "10": "T", "1": "T" };
   // Colore dell'inchiostro -> semi possibili (blu e verde: mazzo a quattro colori).
   const SUITS_BY_INK = { 2: "cs", 3: "dh", 4: "d", 5: "c" };
-  const SUIT_CHARS = { s: "♠", c: "♣", h: "♥", d: "♦" };
+  const SUIT_CHARS = { s: "\u2660", c: "\u2663", h: "\u2665", d: "\u2666" };
   const FONTS = ["Arial", "Helvetica", "Verdana", "Trebuchet MS", "Georgia", "Times New Roman",
     "Courier New", "Impact", "Avenir Next", "Futura", "Gill Sans", "Chalkboard SE", "Marker Felt",
     "Noteworthy", "Comic Sans MS", "Roboto", "sans-serif", "serif"];
+  const NB = [[-1, 0], [-2, 0], [-2, -1], [-1, -1], [0, -1], [1, -1], [2, -1], [-1, -2], [0, -2], [1, -2]];
   let rankT = null, suitT = null;
   const stats = { glyphs: 0, pairs: 0 };
 
@@ -42,6 +43,13 @@ const Vision = (() => {
         const u = u0 + (i + 0.5) * su;
         f[row + ((i / SS) | 0)] += val(u * dy + v * dx, v * dy - u * dx);
       }
+    }
+    // Leggera sfocatura della griglia: tollera tratti più sottili o più spessi dei modelli.
+    const t = f.slice();
+    for (let j = 0; j < GH; j++) for (let i = 0; i < GW; i++) {
+      let a = 0, n = 0;
+      for (let v = Math.max(0, j - 1); v <= Math.min(GH - 1, j + 1); v++) for (let u = Math.max(0, i - 1); u <= Math.min(GW - 1, i + 1); u++) { a += t[v * GW + u]; n++; }
+      f[j * GW + i] = a / n;
     }
     let m = 0;
     for (let i = 0; i < f.length; i++) m += f[i];
@@ -100,9 +108,9 @@ const Vision = (() => {
   function build() {
     rankT = []; suitT = [];
     const add = (list, t) => { if (t) list.push(t); };
-    for (const font of FONTS) for (const w of ["400", "700"]) {
+    for (const font of FONTS) for (const w of ["300", "400", "700"]) {
       for (const r of [...RANKS, "1"]) add(rankT, shape(r, (g) => { g.font = `${w} 64px "${font}"`; g.fillText(r, 48, 50); }));
-      for (const s of "cdhs") add(suitT, shape(s, (g) => { g.font = `${w} 64px "${font}"`; g.fillText(SUIT_CHARS[s] + "︎", 48, 50); }));
+      for (const s of "cdhs") add(suitT, shape(s, (g) => { g.font = `${w} 64px "${font}"`; g.fillText(SUIT_CHARS[s] + "\uFE0E", 48, 50); }));
     }
     for (const s of "cdhs") add(suitT, shape(s, (g) => { g.beginPath(); SUIT_PATHS[s](g); g.fill(); }));
   }
@@ -165,9 +173,12 @@ const Vision = (() => {
       const i = y * W + x, c = cls[i];
       if (c < 2) continue;
       let l = 0;
-      const nb = [x > 0 ? i - 1 : -1, y > 0 && x > 0 ? i - W - 1 : -1, y > 0 ? i - W : -1, y > 0 && x < W - 1 ? i - W + 1 : -1];
-      for (const j of nb) {
-        if (j < 0 || cls[j] !== c) continue;
+      // Vicini fino a 2 pixel: i tratti sottili spezzati da un pixel restano un unico glifo.
+      for (const [ox, oy] of NB) {
+        const xx = x + ox, yy = y + oy;
+        if (xx < 0 || yy < 0 || xx >= W) continue;
+        const j = yy * W + xx;
+        if (cls[j] !== c) continue;
         const r = find(lab[j]);
         if (!l) l = r; else if (r !== l) { parent[r] = l; }
       }
@@ -201,7 +212,7 @@ const Vision = (() => {
       let w = c.x1 - c.x0 + 1, h = c.y1 - c.y0 + 1, s = Math.max(w, h);
       if (s < minS || s > maxS || c.absorbed || c.ns < 0.2 * c.n || c.n / (w * h) < 0.12 || !onPaper(c, s)) continue;
       // Pezzi staccati dalla soglia (il gambo sottile di picche e fiori, puntini) tornano al glifo.
-      const gap = Math.max(1, Math.round(0.2 * s));
+      const gap = Math.max(2, Math.round(0.06 * s));
       for (const f of all) {
         if (f === c || f.absorbed || !f.ns || f.cls !== c.cls || f.n > 0.3 * c.n || Math.max(f.x1 - f.x0, f.y1 - f.y0) >= 0.6 * s) continue;
         if (Math.max(f.x0 - c.x1, c.x0 - f.x1, f.y0 - c.y1, c.y0 - f.y1) > gap) continue;
@@ -214,6 +225,20 @@ const Vision = (() => {
       if (fill < 0.12 || fill > 0.92 || w / h < 0.12 || w / h > 2.5) continue;
       glyphs.push(c);
     }
+    // Pezzi dello stesso carattere (tratti sottili spezzati) hanno riquadri che si sovrappongono: si uniscono.
+    for (let i = 0; i < glyphs.length; i++) for (let j = 0; j < glyphs.length; j++) {
+      const a = glyphs[i], b = glyphs[j];
+      if (i === j || !a || !b || a.cls !== b.cls) continue;
+      const ix = Math.min(a.x1, b.x1) - Math.max(a.x0, b.x0) + 1, iy = Math.min(a.y1, b.y1) - Math.max(a.y0, b.y0) + 1;
+      if (ix <= 0 || iy <= 0) continue;
+      const small = Math.min((a.x1 - a.x0 + 1) * (a.y1 - a.y0 + 1), (b.x1 - b.x0 + 1) * (b.y1 - b.y0 + 1));
+      if (ix * iy < 0.3 * small) continue;
+      a.ids.push(...b.ids); a.n += b.n;
+      a.x0 = Math.min(a.x0, b.x0); a.x1 = Math.max(a.x1, b.x1); a.y0 = Math.min(a.y0, b.y0); a.y1 = Math.max(a.y1, b.y1);
+      glyphs[j] = null;
+      j = -1;
+    }
+    glyphs = glyphs.filter(Boolean);
     // Il "10" è fatto di due pezzi affiancati: si uniscono se quello a sinistra è stretto come un "1".
     glyphs.sort((p, q) => p.x0 - q.x0);
     for (let i = 0; i < glyphs.length; i++) {
