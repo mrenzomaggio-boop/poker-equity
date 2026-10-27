@@ -46,29 +46,40 @@ if not (Path("cards.onnx").exists() and Path("labels.json").exists()):
 
 # 2) cifratura con password (AES-256-GCM, chiave da PBKDF2-SHA256 600k iterazioni)
 password = os.environ.get("POKER_PW")
+keep_existing = False
 if not password:
-    print("La password e' VISIBILE mentre la scrivi (cosi' eviti errori di battitura). Annotala.")
+    have_enc = Path("cards.enc").exists()
+    if have_enc:
+        print("Esiste gia' un modello cifrato (cards.enc): premi solo Invio per tenere la password attuale.")
+    else:
+        print("La password e' VISIBILE mentre la scrivi (cosi' eviti errori di battitura). Annotala.")
     while True:
-        password = input("Scegli la password dell'app (min. 10 caratteri), poi premi Invio: ").strip()
+        password = input("Password dell'app (min. 10 caratteri), poi premi Invio: ").strip()
+        if password == "" and have_enc:
+            keep_existing = True
+            break
         if len(password) < 10:
             print("Troppo corta: una password debole si indovina anche se il modello e' cifrato.")
             continue
         break
 
-py = venv_python()
-run(py, "-m", "pip", "install", "-q", "cryptography")
-encrypt = (
-    "import os, secrets\n"
-    "from cryptography.hazmat.primitives import hashes\n"
-    "from cryptography.hazmat.primitives.ciphers.aead import AESGCM\n"
-    "from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC\n"
-    "salt, iv = secrets.token_bytes(16), secrets.token_bytes(12)\n"
-    "key = PBKDF2HMAC(hashes.SHA256(), 32, salt, 600000).derive(os.environ['POKER_PW'].encode())\n"
-    "data = AESGCM(key).encrypt(iv, open('cards.onnx', 'rb').read(), None)\n"
-    "open('cards.enc', 'wb').write(salt + iv + data)\n"
-)
-run(py, "-c", encrypt, env={**os.environ, "POKER_PW": password})
-print("Modello cifrato -> cards.enc (la password non e' recuperabile: se la perdi, rilancia deploy.py)")
+if not keep_existing:
+    py = venv_python()
+    run(py, "-m", "pip", "install", "-q", "cryptography")
+    encrypt = (
+        "import os, secrets\n"
+        "from cryptography.hazmat.primitives import hashes\n"
+        "from cryptography.hazmat.primitives.ciphers.aead import AESGCM\n"
+        "from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC\n"
+        "salt, iv = secrets.token_bytes(16), secrets.token_bytes(12)\n"
+        "key = PBKDF2HMAC(hashes.SHA256(), 32, salt, 600000).derive(os.environ['POKER_PW'].encode())\n"
+        "data = AESGCM(key).encrypt(iv, open('cards.onnx', 'rb').read(), None)\n"
+        "open('cards.enc', 'wb').write(salt + iv + data)\n"
+    )
+    run(py, "-c", encrypt, env={**os.environ, "POKER_PW": password})
+    print("Modello cifrato -> cards.enc (la password non e' recuperabile: se la perdi, rilancia deploy.py)")
+else:
+    print("Tengo il modello cifrato attuale.")
 
 # 3) pubblicazione
 for tool, hint in (("git", "https://git-scm.com/downloads"), ("gh", "https://cli.github.com")):
