@@ -62,22 +62,57 @@ const Vision = (() => {
   }
 
   // Punteggio di ogni classe = media dei suoi K modelli più simili (un solo font "strano"
-  // non basta a far vincere la classe sbagliata).
+  // non basta a far vincere la classe sbagliata). I modelli imparati dal gioco stesso valgono
+  // da soli: sono la stessa grafica, con la stessa sfocatura della fotocamera.
   function best(q, list, K = 3) {
-    const by = {};
+    const by = {}, own = {};
     for (const t of list) {
       let s = 0;
       for (let i = 0; i < q.f.length; i++) s += q.f[i] * t.f[i];
       s -= 0.6 * Math.abs(Math.log(q.aspect / t.aspect));
-      (by[t.name] = by[t.name] || []).push(s);
+      if (t.learned) { if (!(own[t.name] >= s)) own[t.name] = s; }
+      else (by[t.name] = by[t.name] || []).push(s);
     }
-    let top = { name: "", s: -9 };
-    for (const name in by) {
-      const v = by[name].sort((a, b) => b - a).slice(0, K);
-      const s = v.reduce((a, b) => a + b, 0) / v.length;
-      if (s > top.s) top = { name, s };
+    let top = { name: "", s: -9, q };
+    for (const name of new Set([...Object.keys(by), ...Object.keys(own)])) {
+      const v = (by[name] || []).sort((a, b) => b - a).slice(0, K);
+      let s = v.length ? v.reduce((a, b) => a + b, 0) / v.length : -9;
+      if (own[name] >= 0.75) s = Math.max(s, own[name] - 0.03);
+      if (s > top.s) top = { name, s, q };
     }
     return top;
+  }
+
+  // Modelli imparati: numeri e semi del gioco reale, presi da letture confermate o corrette a mano.
+  const learned = { rank: [], suit: [] }, KEEP = 4;
+  function learn(kind, name, q) {
+    if (!q) return;
+    const list = learned[kind];
+    list.push({ name, f: q.f, aspect: q.aspect, learned: true });
+    const mine = list.filter((t) => t.name === name);
+    if (mine.length > KEEP) list.splice(list.indexOf(mine[0]), 1);
+  }
+  // Una carta letta (rf/sf) diventa modello del codice indicato, es. "Td".
+  function learnCard(code, rf, sf) {
+    learn("rank", code[0] === "T" ? "10" : code[0], rf);
+    learn("suit", code[1], sf);
+  }
+  const exportLearned = () => JSON.stringify(["rank", "suit"].map((k) =>
+    learned[k].map((t) => [t.name, +t.aspect.toFixed(3), Array.from(t.f, (v) => +v.toFixed(3))])));
+  function importLearned(json) {
+    try {
+      JSON.parse(json).forEach((list, i) => {
+        learned[i ? "suit" : "rank"] = list.map(([name, aspect, f]) => ({ name, aspect, f: Float32Array.from(f), learned: true }));
+      });
+    } catch (e) {}
+  }
+  const forget = () => { learned.rank = []; learned.suit = []; };
+  // Correzione da "wrong" a "right": i modelli imparati per il numero o il seme sbagliati vengono
+  // probabilmente proprio da quella lettura sbagliata, quindi si tolgono.
+  function unlearn(wrong, right) {
+    const R = (c) => (c[0] === "T" ? "10" : c[0]);
+    if (R(wrong) !== R(right)) learned.rank = learned.rank.filter((t) => t.name !== R(wrong));
+    if (wrong[1] !== right[1]) learned.suit = learned.suit.filter((t) => t.name !== wrong[1]);
   }
 
   // Disegna con draw(g) su un canvas 96x96 e restituisce la forma come modello.
@@ -130,6 +165,7 @@ const Vision = (() => {
 
   function detect(img) {
     if (!rankT) build();
+    const RT = rankT.concat(learned.rank), ST = suitT.concat(learned.suit);
     const W = img.width, H = img.height, N = W * H, d = img.data;
     let R = new Uint8Array(N), G = new Uint8Array(N), B = new Uint8Array(N);
     for (let i = 0; i < N; i++) { R[i] = d[4 * i]; G[i] = d[4 * i + 1]; B[i] = d[4 * i + 2]; }
@@ -298,8 +334,8 @@ const Vision = (() => {
           const b = best(feature(g.core, ink, W, dx, dy), list);
           return b.s > a.s ? b : a;
         };
-        const r = read(rk, rankT);
-        const sT = suitT.filter((t) => suits.includes(t.name));
+        const r = read(rk, RT);
+        const sT = ST.filter((t) => suits.includes(t.name));
         let s = read(st, sT);
         // Il seme piccolo dell'indice è di pochi pixel: se sulla stessa carta c'è un seme grande
         // (al centro, come nelle carte disegnate), quello è più leggibile e prevale.
@@ -312,7 +348,7 @@ const Vision = (() => {
         }
         // Un numero un po' incerto passa se il seme è chiaro (e viceversa): conta la coppia.
         if (r.s < RANK_MIN - 0.05 || s.s < SUIT_MIN || r.s + s.s < 2 * RANK_MIN + 0.03) continue;
-        cand.push({ rk, st, code: (RANK_CODE[r.name] || r.name) + s.name, conf: (r.s + s.s) / 2 });
+        cand.push({ rk, st, code: (RANK_CODE[r.name] || r.name) + s.name, conf: (r.s + s.s) / 2, rf: r.q, sf: s.q });
       }
     }
     stats.pairs = cand.length;
@@ -325,7 +361,7 @@ const Vision = (() => {
       used.add(c.rk); used.add(c.st);
       const x0 = Math.min(c.rk.x0, c.st.x0), x1 = Math.max(c.rk.x1, c.st.x1);
       const y0 = Math.min(c.rk.y0, c.st.y0), y1 = Math.max(c.rk.y1, c.st.y1);
-      out.push({ code: c.code, conf: c.conf, x: (x0 + x1) / 2 / W, y: (y0 + y1) / 2 / H, w: (x1 - x0 + 1) / W, h: (y1 - y0 + 1) / H });
+      out.push({ code: c.code, conf: c.conf, rf: c.rf, sf: c.sf, x: (x0 + x1) / 2 / W, y: (y0 + y1) / 2 / H, w: (x1 - x0 + 1) / W, h: (y1 - y0 + 1) / H });
     }
 
     // 6) Numeri spezzati (righe del monitor, tratti sottili): si parte da un seme ben riconosciuto
@@ -333,7 +369,7 @@ const Vision = (() => {
     //    Vale per carte diritte, come quelle del board.
     for (const st of glyphs) {
       if (used.has(st)) continue;
-      const s = best(feature(st.pts, ink, W, 0, 1), suitT.filter((t) => SUITS_BY_INK[st.cls].includes(t.name)));
+      const s = best(feature(st.pts, ink, W, 0, 1), ST.filter((t) => SUITS_BY_INK[st.cls].includes(t.name)));
       if (s.s < 0.6) continue;
       const rx0 = st.cx - st.s, rx1 = st.cx + st.s, ry0 = st.y0 - 2.2 * st.s, ry1 = st.y0 - 1;
       const ids = new Set();
@@ -349,15 +385,15 @@ const Vision = (() => {
       if (taken || n < 0.25 * st.n || y1 - y0 + 1 < 0.6 * st.s || y1 - y0 + 1 > 2 * st.s) continue;
       const pts = [];
       for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) if (ids.has(lab[y * W + x])) pts.push(x, y);
-      const r = best(feature(pts, ink, W, 0, 1), rankT);
+      const r = best(feature(pts, ink, W, 0, 1), RT);
       if (stats.debug) stats.debug.push(["anchor", Math.round(st.cx), Math.round(st.cy), r.name, r.s.toFixed(2), s.name, s.s.toFixed(2)]);
       if (r.s < RANK_MIN - 0.05) continue;
       used.add(st);
       const X0 = Math.min(x0, st.x0), X1 = Math.max(x1, st.x1);
-      out.push({ code: (RANK_CODE[r.name] || r.name) + s.name, conf: (r.s + s.s) / 2, x: (X0 + X1) / 2 / W, y: (y0 + st.y1) / 2 / H, w: (X1 - X0 + 1) / W, h: (st.y1 - y0 + 1) / H });
+      out.push({ code: (RANK_CODE[r.name] || r.name) + s.name, conf: (r.s + s.s) / 2, rf: r.q, sf: s.q, x: (X0 + X1) / 2 / W, y: (y0 + st.y1) / 2 / H, w: (X1 - X0 + 1) / W, h: (st.y1 - y0 + 1) / H });
     }
     return out;
   }
 
-  return { detect, stats };
+  return { detect, stats, learnCard, unlearn, exportLearned, importLearned, forget, get learned() { return learned; } };
 })();

@@ -11,7 +11,7 @@ work.width = work.height = SIZE;
 const wctx = work.getContext("2d", { willReadFrequently: true });
 
 let session, labels, opponents = 1;
-let hand = [], board = [], memo = {}, sharpMax = 0, published = "";
+let hand = [], board = [], memo = {}, alias = {}, sharpMax = 0, published = "";
 // Correzione a mano: le carte scelte restano bloccate finché non si torna in automatico.
 let lockHand = false, lockBoard = false, autoHand = [], autoBoard = [];
 let lastBoxes = [];
@@ -153,23 +153,34 @@ async function detectRegion(region, best) {
   }
 }
 
+const saveLearned = () => store.set("pe_learn", Vision.exportLearned());
+const near = (a, b) => Math.abs(a.x - b.x) < 0.04 && Math.abs(a.y - b.y) < 0.03;
+const rival = (k, m) => Object.entries(memo).some(([o, r]) => o !== k && r.n >= 2 && near(r, m));
+
 function update(best) {
   const now = performance.now();
   // Fotogrammi mossi o sfocati (nitidezza molto sotto le migliori recenti) non votano,
   // salvo letture molto sicure: è lì che nascono gli scambi tipo 2 -> 7.
   sharpMax = Math.max(Vision.stats.sharp, sharpMax * 0.98);
   const sharp = Vision.stats.sharp >= 0.7 * sharpMax;
-  for (const [k, v] of Object.entries(best)) {
+  if (!sharp) $("dbg").textContent += " · tieni fermo il telefono";
+  for (let [k, v] of Object.entries(best)) {
     if (!sharp && v.conf < 0.75) continue;
+    if (alias[k] && memo[alias[k]] && near(v, memo[alias[k]])) k = alias[k];  // lettura già corretta a mano
     const m = memo[k] || (memo[k] = { n: 0, x: v.x, y: v.y });
     m.n++; m.seen = now;
     m.x += (v.x - m.x) * 0.3; m.y += (v.y - m.y) * 0.3;
+    m.rf = v.rf; m.sf = v.sf;
+    // Carta confermata più volte e senza letture rivali nello stesso punto: il suo numero e il suo
+    // seme, così come li vede la fotocamera, diventano modelli per le prossime letture.
+    if (sharp && v.conf >= 0.65 && (m.n === 6 || m.n === 20) && !rival(k, m)) { Vision.learnCard(k, v.rf, v.sf); saveLearned(); }
   }
   for (const k in memo) if (now - memo[k].seen > FORGET_MS) delete memo[k];
+  for (const k in alias) if (!memo[alias[k]]) delete alias[k];
   // Letture diverse nello stesso punto (es. 2♦ e 7♦): vince quella vista più volte.
   const kept = [];
   for (const [k, m] of Object.entries(memo).filter(([, m]) => m.n >= CONFIRM).sort((a, b) => b[1].n - a[1].n)) {
-    if (!kept.some(([, o]) => Math.abs(o.x - m.x) < 0.04 && Math.abs(o.y - m.y) < 0.03)) kept.push([k, m]);
+    if (!kept.some(([, o]) => near(o, m))) kept.push([k, m]);
   }
   const h = kept.filter(([, m]) => m.y >= 0.5).slice(0, 2).map(([k]) => k).sort();
   const b = kept.filter(([, m]) => m.y < 0.5).slice(0, 5).map(([k]) => k).sort();
@@ -262,10 +273,24 @@ document.querySelectorAll("#picker .slot").forEach((el) => {
   el.onclick = () => { const i = +el.dataset.i; if (i === slot) draft[i] = null; slot = i; renderPicker(); };
 });
 $("info").onclick = openPicker;
+// Correzione a mano di una sola carta letta male: l'app impara come appare davvero quella carta
+// e corregge la sua memoria, così non serve bloccare. Negli altri casi la sezione resta bloccata.
+function teach(auto, fixed) {
+  const rem = auto.filter((k) => !fixed.includes(k)), add = fixed.filter((k) => !auto.includes(k));
+  if (rem.length !== 1 || add.length !== 1 || !memo[rem[0]]) return false;
+  const m = memo[rem[0]];
+  Vision.unlearn(rem[0], add[0]);
+  if (m.rf) Vision.learnCard(add[0], m.rf, m.sf);
+  saveLearned();
+  memo[add[0]] = { ...m, n: m.n + 5 };
+  delete memo[rem[0]];
+  alias[rem[0]] = add[0];
+  return true;
+}
 $("pick-ok").onclick = () => {
   const h = draft.slice(0, 2).filter(Boolean).sort(), b = draft.slice(2).filter(Boolean).sort();
-  lockHand = h.join() !== hand.slice().sort().join() || lockHand;
-  lockBoard = b.join() !== board.slice().sort().join() || lockBoard;
+  if (h.join() !== hand.slice().sort().join()) lockHand = !teach(autoHand, h);
+  if (b.join() !== board.slice().sort().join()) lockBoard = !teach(autoBoard, b);
   hand = h; board = b; published = "";
   $("picker").hidden = true;
   recompute();
@@ -277,6 +302,8 @@ $("pick-auto").onclick = () => {
   recompute();
 };
 $("pick-close").onclick = () => { $("picker").hidden = true; };
+$("pick-forget").onclick = () => { Vision.forget(); store.del("pe_learn"); $("picker").hidden = true; };
+Vision.importLearned(store.get("pe_learn") || "[]");
 
 window.addEventListener("scroll", () => { if (window.scrollY || window.scrollX) window.scrollTo(0, 0); });
 
