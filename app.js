@@ -1,5 +1,5 @@
 // Riconoscimento carte (YOLO ONNX nel browser) + equity.
-const SIZE = 640, CONF = 0.5, ITER = 2000, STABLE = 3;
+const SIZE = 640, CONF = 0.35, ITER = 2000, STABLE = 3;
 const $ = (id) => document.getElementById(id);
 const video = $("video"), overlay = $("overlay");
 const work = document.createElement("canvas");
@@ -52,31 +52,53 @@ async function start() {
   if ($("remember").checked) store.set("pe_pw", pw); else store.del("pe_pw");
   try {
     const stream = await navigator.mediaDevices.getUserMedia({
-      video: { facingMode: { ideal: "environment" }, width: { ideal: 1280 }, height: { ideal: 720 } },
+      video: { facingMode: { ideal: "environment" }, width: { ideal: 1920 }, height: { ideal: 1080 } },
       audio: false,
     });
     video.srcObject = stream;
     await video.play();
-  } catch (e) { setStatus("Fotocamera non disponibile: " + e.message); $("start").disabled = false; return; }
+    // Schermo da inquadrare: meglio la messa a fuoco continua, dove il telefono la supporta.
+    try { await stream.getVideoTracks()[0].applyConstraints({ advanced: [{ focusMode: "continuous" }] }); } catch (e) {}
+  } catch (e) { setStatus("Cattura non disponibile: " + e.message); $("start").disabled = false; return; }
   $("intro").hidden = true;
   $("intro").style.display = "none";
   setStatus("");
   loop();
 }
 
-function letterbox() {
-  const vw = video.videoWidth, vh = video.videoHeight;
-  const s = Math.min(SIZE / vw, SIZE / vh);
-  const nw = Math.round(vw * s), nh = Math.round(vh * s);
+// Disegna la regione r = {sx, sy, sw, sh} (pixel del video) nel canvas 640x640 con bande grigie.
+function letterbox(r) {
+  const s = Math.min(SIZE / r.sw, SIZE / r.sh);
+  const nw = Math.round(r.sw * s), nh = Math.round(r.sh * s);
   const px = (SIZE - nw) / 2, py = (SIZE - nh) / 2;
   wctx.fillStyle = "#727272";
   wctx.fillRect(0, 0, SIZE, SIZE);
-  wctx.drawImage(video, px, py, nw, nh);
-  return { px, py, nw, nh };
+  wctx.drawImage(video, r.sx, r.sy, r.sw, r.sh, px, py, nw, nh);
+  return { px, py, nw, nh, ...r };
 }
 
+// Inquadrando uno schermo le carte sono piccole: oltre al frame intero si analizzano
+// due finestre quadrate sovrapposte lungo il lato lungo (sinistra/destra o alto/basso).
+function regions() {
+  const vw = video.videoWidth, vh = video.videoHeight;
+  const full = { sx: 0, sy: 0, sw: vw, sh: vh };
+  if (vw > vh * 1.2) return [full, { sx: 0, sy: 0, sw: vh, sh: vh }, { sx: vw - vh, sy: 0, sw: vh, sh: vh }];
+  if (vh > vw * 1.2) return [full, { sx: 0, sy: 0, sw: vw, sh: vw }, { sx: 0, sy: vh - vw, sw: vw, sh: vw }];
+  return [full];
+}
+
+let topConf = 0;
 async function detect() {
-  const lb = letterbox();
+  const best = {};
+  topConf = 0;
+  for (const r of regions()) await detectRegion(r, best);
+  $("dbg").textContent = "conf max " + topConf.toFixed(2) + " · carte " + Object.keys(best).length;
+  return best;
+}
+
+async function detectRegion(region, best) {
+  const lb = letterbox(region);
+  const vw = video.videoWidth, vh = video.videoHeight;
   const d = wctx.getImageData(0, 0, SIZE, SIZE).data;
   const n = SIZE * SIZE;
   const f = new Float32Array(3 * n);
@@ -88,8 +110,10 @@ async function detect() {
   const out = await session.run({ [session.inputNames[0]]: new ort.Tensor("float32", f, [1, 3, SIZE, SIZE]) });
   const o = out[session.outputNames[0]];
   const nc = o.dims[1] - 4, N = o.dims[2], data = o.data;
+  // Diagnostica: miglior punteggio grezzo visto nel frame (aiuta a capire se il modello "vede" qualcosa).
+  for (let i = 0; i < N; i++) for (let k = 0; k < nc; k++) { const v = data[(4 + k) * N + i]; if (v > topConf) topConf = v; }
 
-  const best = {}; // etichetta -> {conf, x, y, w, h} normalizzati sul frame
+  // best: etichetta -> {conf, x, y, w, h} normalizzati sul frame intero
   for (let i = 0; i < N; i++) {
     let c = 0, m = 0;
     for (let k = 0; k < nc; k++) { const v = data[(4 + k) * N + i]; if (v > m) { m = v; c = k; } }
@@ -100,11 +124,12 @@ async function detect() {
     if (best[code] && best[code].conf >= m) continue;
     best[code] = {
       conf: m,
-      x: (data[i] - lb.px) / lb.nw, y: (data[N + i] - lb.py) / lb.nh,
-      w: data[2 * N + i] / lb.nw, h: data[3 * N + i] / lb.nh,
+      x: (lb.sx + (data[i] - lb.px) / lb.nw * lb.sw) / vw,
+      y: (lb.sy + (data[N + i] - lb.py) / lb.nh * lb.sh) / vh,
+      w: data[2 * N + i] / lb.nw * lb.sw / vw,
+      h: data[3 * N + i] / lb.nh * lb.sh / vh,
     };
   }
-  return best;
 }
 
 function update(best) {
