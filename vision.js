@@ -268,6 +268,8 @@ const Vision = (() => {
       const set = g.ids;
       g.pts = [];
       for (let y = g.y0; y <= g.y1; y++) for (let x = g.x0; x <= g.x1; x++) if (set.includes(lab[y * W + x])) g.pts.push(x, y);
+      // Senza i frammenti riattaccati: serve quando ha agganciato un'ombra o un pezzo di carta vicina.
+      if (set.length > 1 && !g.ten) { g.core = []; for (let i = 0; i < g.pts.length; i += 2) if (lab[g.pts[i + 1] * W + g.pts[i]] === set[0]) g.core.push(g.pts[i], g.pts[i + 1]); }
       g.cx = (g.x0 + g.x1) / 2; g.cy = (g.y0 + g.y1) / 2; g.s = Math.max(g.x1 - g.x0, g.y1 - g.y0) + 1;
     }
 
@@ -286,9 +288,15 @@ const Vision = (() => {
       if (Math.abs(vx) > 0.71) continue;
       const suits = SUITS_BY_INK[a.cls];
       for (const [rk, st, dx, dy] of [[up, lo, vx, vy], [lo, up, -vx, -vy]]) {
-        const r = best(feature(rk.pts, ink, W, dx, dy), rankT);
+        const read = (g, list) => {
+          const a = best(feature(g.pts, ink, W, dx, dy), list);
+          if (!g.core || g.core.length < 0.5 * g.pts.length) return a;
+          const b = best(feature(g.core, ink, W, dx, dy), list);
+          return b.s > a.s ? b : a;
+        };
+        const r = read(rk, rankT);
         const sT = suitT.filter((t) => suits.includes(t.name));
-        let s = best(feature(st.pts, ink, W, dx, dy), sT);
+        let s = read(st, sT);
         // Il seme piccolo dell'indice è di pochi pixel: se sulla stessa carta c'è un seme grande
         // (al centro, come nelle carte disegnate), quello è più leggibile e prevale.
         for (const g of glyphs) {
@@ -298,8 +306,8 @@ const Vision = (() => {
           const big = best(feature(g.pts, ink, W, dx, dy), sT);
           if (big.s > s.s && big.s > 0.7) s = big;
         }
-        if (r.s < RANK_MIN) continue;
-        if (s.s < SUIT_MIN) continue;
+        // Un numero un po' incerto passa se il seme è chiaro (e viceversa): conta la coppia.
+        if (r.s < RANK_MIN - 0.05 || s.s < SUIT_MIN || r.s + s.s < 2 * RANK_MIN + 0.03) continue;
         cand.push({ rk, st, code: (RANK_CODE[r.name] || r.name) + s.name, conf: (r.s + s.s) / 2 });
       }
     }
