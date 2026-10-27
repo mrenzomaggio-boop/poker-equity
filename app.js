@@ -59,6 +59,7 @@ async function start() {
     await video.play();
   } catch (e) { setStatus("Fotocamera non disponibile: " + e.message); $("start").disabled = false; return; }
   $("intro").hidden = true;
+  $("intro").style.display = "none";
   setStatus("");
   loop();
 }
