@@ -1,5 +1,8 @@
-// Riconoscimento carte (YOLO ONNX nel browser) + equity.
-const SIZE = 640, CONF = 0.35, ITER = 2000, STABLE = 3;
+// Riconoscimento carte (logica sugli indici, vision.js; YOLO ONNX solo con ?yolo) + equity.
+const SIZE = 640, CONF = 0.35, ITER = 2000;
+// Una carta entra in mano/board se compare in almeno VOTES degli ultimi HIST fotogrammi.
+const HIST = 6, VOTES = 3;
+const useYolo = new URLSearchParams(location.search).has("yolo");
 const $ = (id) => document.getElementById(id);
 const video = $("video"), overlay = $("overlay");
 const work = document.createElement("canvas");
@@ -7,7 +10,7 @@ work.width = work.height = SIZE;
 const wctx = work.getContext("2d", { willReadFrequently: true });
 
 let session, labels, opponents = 1;
-let hand = [], board = [], lastKey = "", streak = 0, published = "";
+let hand = [], board = [], history = [], published = "";
 let lastBoxes = [];
 
 const setStatus = (t) => { $("status").textContent = t; };
@@ -87,12 +90,24 @@ function regions() {
   return [full];
 }
 
+const frame = document.createElement("canvas");
+const fctx = frame.getContext("2d", { willReadFrequently: true });
+
 let topConf = 0;
 async function detect() {
-  const best = {};
+  const vw = video.videoWidth, vh = video.videoHeight, k = Math.min(1, 1920 / Math.max(vw, vh));
+  const fw = Math.round(vw * k), fh = Math.round(vh * k);
+  if (frame.width !== fw || frame.height !== fh) { frame.width = fw; frame.height = fh; }
+  fctx.drawImage(video, 0, 0, fw, fh);
+  const t0 = performance.now(), best = {};
+  for (const c of Vision.detect(fctx.getImageData(0, 0, fw, fh))) {
+    if (!best[c.code] || best[c.code].conf < c.conf) best[c.code] = c;
+  }
+  const ms = Math.round(performance.now() - t0);
   topConf = 0;
-  for (const r of regions()) await detectRegion(r, best);
-  $("dbg").textContent = "conf max " + topConf.toFixed(2) + " · carte " + Object.keys(best).length;
+  if (useYolo) for (const r of regions()) await detectRegion(r, best);
+  $("dbg").textContent = "simboli " + Vision.stats.glyphs + " · carte " + Object.keys(best).length + " · " + ms + " ms" +
+    (useYolo ? " · yolo " + topConf.toFixed(2) : "");
   return best;
 }
 
@@ -132,14 +147,21 @@ async function detectRegion(region, best) {
   }
 }
 
+// Voto sugli ultimi fotogrammi: una lettura sbagliata isolata non cambia mano e board.
 function update(best) {
-  const ranked = Object.entries(best).sort((a, b) => b[1].conf - a[1].conf);
-  const h = ranked.filter(([, v]) => v.y >= 0.5).slice(0, 2).map(([k]) => k).sort();
-  const b = ranked.filter(([, v]) => v.y < 0.5).slice(0, 5).map(([k]) => k).sort();
-  lastBoxes = ranked.map(([k, v]) => ({ k, ...v }));
+  history.push(best);
+  if (history.length > HIST) history.shift();
+  const tally = {};
+  for (const f of history) for (const [k, v] of Object.entries(f)) {
+    const t = tally[k] || (tally[k] = { n: 0, y: 0 });
+    t.n++; t.y += v.y;
+  }
+  const ok = Object.entries(tally).filter(([, t]) => t.n >= VOTES).sort((a, b) => b[1].n - a[1].n);
+  const h = ok.filter(([, t]) => t.y / t.n >= 0.5).slice(0, 2).map(([k]) => k).sort();
+  const b = ok.filter(([, t]) => t.y / t.n < 0.5).slice(0, 5).map(([k]) => k).sort();
+  lastBoxes = Object.entries(best).map(([k, v]) => ({ k, ...v }));
   const key = h.join("") + "|" + b.join("");
-  if (key === lastKey) streak++; else { lastKey = key; streak = 1; }
-  if (streak === STABLE && key !== published) { published = key; hand = h; board = b; recompute(); }
+  if (key !== published) { published = key; hand = h; board = b; recompute(); }
 }
 
 function recompute() {
