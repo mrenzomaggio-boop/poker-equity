@@ -1,0 +1,8 @@
+{
+  "name": "Poker Equity",
+  "short_name": "Poker Equity",
+  "start_url": ".",
+  "display": "standalone",
+  "background_color": "#000000",
+  "theme_color": "#000000"
+}

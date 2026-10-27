@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="it">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Poker Equity">
+<meta name="theme-color" content="#000000">
+<link rel="manifest" href="manifest.json">
+<title>Poker Equity</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #000; color: #fff; font-family: -apple-system, system-ui, sans-serif; overflow: hidden; }
+  #video, #overlay { position: fixed; inset: 0; width: 100%; height: 100%; }
+  #video { object-fit: cover; }
+  #divider { position: fixed; left: 0; right: 0; top: 50%; border-top: 1px solid rgba(255, 235, 59, .7); }
+  .panel { background: rgba(0, 0, 0, .6); border-radius: 12px; padding: 10px 14px; }
+  #info { position: fixed; top: max(12px, env(safe-area-inset-top)); left: 12px; font: 600 16px monospace; }
+  #bottom { position: fixed; left: 12px; right: 12px; bottom: max(12px, env(safe-area-inset-bottom)); display: flex; flex-direction: column; align-items: center; gap: 10px; }
+  #eq { font-size: 64px; font-weight: 800; padding: 0 20px; }
+  #eq:empty { display: none; }
+  .opp { display: flex; align-items: center; gap: 16px; font-size: 18px; }
+  .opp button { width: 44px; height: 44px; border-radius: 22px; border: 0; font-size: 24px; background: #fff; }
+  #intro { position: fixed; inset: 0; background: #111; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 16px; text-align: center; padding: 24px; }
+  #start { font-size: 20px; padding: 14px 28px; border-radius: 14px; border: 0; background: #3f3; font-weight: 700; }
+  #status { color: #fa0; font-size: 14px; }
+  #pw { font-size: 18px; padding: 12px 14px; border-radius: 12px; border: 0; width: 240px; text-align: center; }
+  .rem { font-size: 14px; color: #aaa; }
+</style>
+</head>
+<body>
+<video id="video" playsinline muted autoplay></video>
+<canvas id="overlay"></canvas>
+<div id="divider"></div>
+
+<div id="info" class="panel">
+  <div>Board: <span id="board">-</span></div>
+  <div>Mano: <span id="hand">-</span></div>
+</div>
+
+<div id="bottom">
+  <div id="eq" class="panel"></div>
+  <div class="opp panel">
+    <button id="minus">−</button>
+    <span>Avversari: <b id="opp">1</b></span>
+    <button id="plus">+</button>
+  </div>
+</div>
+
+<div id="intro">
+  <h1>Poker Equity</h1>
+  <p>Inquadra il tavolo: carte sopra la linea gialla = board, sotto = la tua mano.<br>
+     Tutto resta sul tuo telefono, nessuna immagine viene inviata.</p>
+  <input id="pw" type="password" placeholder="Password" autocomplete="current-password">
+  <label class="rem"><input id="remember" type="checkbox" checked> Ricordami su questo iPhone</label>
+  <button id="start">Avvia fotocamera</button>
+  <div id="status"></div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/onnxruntime-web@1.18.0/dist/ort.min.js"></script>
+<script src="engine.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
